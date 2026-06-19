@@ -1,0 +1,75 @@
+# augment-image-edit — standalone Docker Compose port of the OSMO
+# `augment-image-edit / image-edit` task from
+#   assets/configs/good_image_generation.yaml
+#
+# Runs the Qwen Image-Edit (OVSL2SL) augmentation pass: reads the per-cell ROI
+# crops produced by the usd2roi-replicator task (its `usd2roi-components/` tree)
+# and writes SL-restyled RGBs to an `augment/` tree. This task does NOT run a
+# model locally — it calls a remote Qwen-Image-Edit endpoint (IMAGE_EDIT_ENDPOINT).
+#
+# Pipeline position:
+#   usd2roi-replicator  →  augment-image-edit  (this)  →  finetune / anomaly-infer
+#
+# ── Prerequisites on the Docker host ─────────────────────────────────────────
+#   1. NVIDIA driver + NVIDIA Container Toolkit installed (so `--gpus` works).
+#   2. A reachable Qwen-Image-Edit-NVPCB-OVSL2SL endpoint (IMAGE_EDIT_ENDPOINT).
+#      See references/nim/README.md to stand one up, or point at an existing one.
+#   3. A Hugging Face token with access to the Qwen weights (HF_TOKEN) — was the
+#      OSMO `credentials: hf-token` block.
+#   4. The usd2roi-components output tree from the usd2roi-replicator run
+#      available on the host. Point INPUT_DIR at it (the dir that contains crop/).
+#   5. nvcr.io login if your account requires it (paidf-* images are public).
+#
+# ── Configure via environment (or a .env file next to this compose) ──────────
+#   INPUT_DIR            host path to the usd2roi-components tree    (REQUIRED)
+#                        (the dir that contains crop/<MAT>/<cell>/normal_img/)
+#   OUTPUT_DIR           host path where SL-restyled crops are written (default ./output)
+#   COOKBOOKS_DIR        host path to assets/cookbooks               (REQUIRED)
+#   IMAGE_EDIT_ENDPOINT  Qwen Image-Edit OpenAI-compatible endpoint  (REQUIRED)
+#   IMAGE_EDIT_MODEL     model name served at the endpoint
+#                        (default nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL)
+#   HF_TOKEN             Hugging Face token for the Qwen weights     (REQUIRED)
+#
+# ── Run ──────────────────────────────────────────────────────────────────────
+#   source setup.sh   # exports INPUT_DIR / OUTPUT_DIR / COOKBOOKS_DIR / endpoint
+#   docker compose up
+#   (add --abort-on-container-exit to stop the moment the job finishes)
+
+services:
+  augment-image-edit:
+    # image: nvcr.io/nvidia/paidf-augmentation:1.0.0
+    image: ubuntu:24.04
+    # OSMO overrides the image ENTRYPOINT; we do the same and drive run.sh.
+    command: ["bash", "/tmp/run.sh"]
+    environment:
+      # Mirrors the OSMO task `environment:` block plus the GPU capabilities the
+      # pod template normally injects.
+      NVIDIA_DRIVER_CAPABILITIES: all
+      NVIDIA_VISIBLE_DEVICES: all
+      # Replaces OSMO templating ({{ image_edit_endpoint }} / {{ image_edit_model }}).
+      IMAGE_EDIT_ENDPOINT: "${IMAGE_EDIT_ENDPOINT:-http://localhost:8000/v1}"
+      IMAGE_EDIT_MODEL: "${IMAGE_EDIT_MODEL:-nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL}"
+      # Was the OSMO `credentials: hf-token -> HF_TOKEN: token` injection.
+      HF_TOKEN: "${HF_TOKEN:-}"
+      # Replaces OSMO templating ({{input:0}} / {{output}}).
+      INPUT_DIR: /data/input
+      OUTPUT_DIR: /data/output
+    volumes:
+      # usd2roi-components tree (read-only) — was the OSMO task input
+      # {{input:0}} from the usd2roi-replicator task.
+      - "${INPUT_DIR}:/data/input:ro"
+      # Run output — was the OSMO URL output runs/<name>/augment.
+      - "${OUTPUT_DIR:-./output}:/data/output"
+      # OVSL2SL augmentation cookbook — was the OSMO `files: localpath` mount.
+      - "${COOKBOOKS_DIR}/pcb/augmentation_config_ovsl2sl.yaml:/tmp/augmentation_cookbook.yaml:ro"
+      # Inline OSMO build_batch_config.py, broken out to its own file.
+      - "./build_batch_config.py:/tmp/build_batch_config.py:ro"
+      # Env-driven port of the OSMO inline run.sh (lives next to this compose).
+      - "./run.sh:/tmp/run.sh:ro"
+#    deploy:
+#      resources:
+#        reservations:
+#          devices:
+#            - driver: nvidia
+#              count: 1
+#              capabilities: [gpu]
