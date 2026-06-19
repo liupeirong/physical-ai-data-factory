@@ -1,14 +1,22 @@
 # Source this before `docker compose up` to populate the env the compose reads.
 #   source setup.sh && docker compose up --abort-on-container-exit
 #
-# These tasks are run one after another by hand, but the output of a previous
-# task is usually the input of the next — as if they belong to one workflow run.
-# That shared run is identified by a single TIMESTAMP. Reuse the same TIMESTAMP
-# the usd2roi-replicator task wrote under, so this task reads its output.
+# Structural-defect variant of the augment-image-edit port. Reads the structural
+# render+crop bundle written by the upstream `isaac-render-defect` docker task
+# (cropped/<mode>/rgb/<NNNN>.png) and writes Qwen OVSL2SL-restyled RGBs into a
+# `structural_defect_edited/` sibling of the same run.
 #
-# INPUT_DIR points at the usd2roi-replicator output tree (the dir that directly
-# contains crop/<MATERIAL>/<cell>/normal_img/); OUTPUT_DIR is the augment subdir
-# of the same run.
+# docker-compose.yaml for this folder is INTENTIONALLY ABSENT — it is
+# byte-identical to docker/augment-image-edit/docker-compose.yaml. Symlink or
+# copy it in before running:
+#
+#   ln -s ../augment-image-edit/docker-compose.yaml docker-compose.yaml
+#   # or: cp ../augment-image-edit/docker-compose.yaml .
+#
+# Only the differing pieces live here:
+#   setup.sh              — INPUT_DIR/OUTPUT_DIR for the structural flow
+#   run.sh / run_org.sh   — preflight + sanity checks for the cropped/<mode>/rgb/ layout
+#   build_batch_config.py — walks cropped/<mode>/rgb/, emits <output>/<mode>/rgb/
 echo "NOTE: For a real run, change 3 things in docker-compose.yaml!"
 echo "1. the docker image"
 echo "2. mount run_org.sh instead of run.sh"
@@ -17,8 +25,11 @@ echo "3. uncomment the gpu section at the end"
 read -r -p "Run TIMESTAMP to use (e.g. 20260619_120000): " TIMESTAMP
 [ -n "$TIMESTAMP" ] || { echo "ERROR: TIMESTAMP is required"; return 1 2>/dev/null || exit 1; }
 export TIMESTAMP
-export INPUT_DIR=/datadrive/dig/runs/pcb-${TIMESTAMP}
-export OUTPUT_DIR=/datadrive/dig/runs/pcb-${TIMESTAMP}/augment
+# INPUT_DIR is the upstream isaac-render-defect OUTPUT_DIR for this TIMESTAMP
+# (it contains cropped/<mode>/rgb/<NNNN>.png plus trigger_NNNN/ and the
+# resolved render_config.yaml / pcba_target.yaml snapshots).
+export INPUT_DIR=/datadrive/dig/runs/pcb-structural-${TIMESTAMP}
+export OUTPUT_DIR=/datadrive/dig/runs/pcb-structural-${TIMESTAMP}/structural_defect_edited
 export COOKBOOKS_DIR=/home/azureuser/dev/paidf-fork/skills/physical-ai-defect-image-generation/assets/cookbooks
 
 # The container user writes to OUTPUT_DIR via the bind mount. Pre-create it

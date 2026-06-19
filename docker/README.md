@@ -21,7 +21,7 @@ usd2roi-replicator  →  augment-image-edit  →  finetune / anomaly-infer
 Notes:
 
 - **usd2roi-replicator** also mounts per-board cookbook YAMLs from `COOKBOOKS_DIR`
-  (`/home/azureuser/dev/physical-ai-data-factory/skills/physical-ai-defect-image-generation/assets/cookbooks`).
+  (`/home/azureuser/dev/paidf-fork/skills/physical-ai-defect-image-generation/assets/cookbooks`).
 - **augment-image-edit** input is the **output of the `usd2roi-replicator` run**
   (same `TIMESTAMP`); output is the `augment/` subdir nested inside it. It also
   mounts the OVSL2SL augmentation cookbook from `COOKBOOKS_DIR` and calls a remote
