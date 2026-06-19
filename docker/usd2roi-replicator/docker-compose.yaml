@@ -36,7 +36,9 @@ services:
     # Kit ray-tracer buffers need a large /dev/shm (>= 16 GiB, 32 preferred).
     shm_size: "32gb"
     # OSMO overrides the image ENTRYPOINT; we do the same and drive run.sh.
-    command: ["bash", "/tmp/run.sh"]
+    # Override (not append to) the image's own ENTRYPOINT so run.sh is the actual
+    # entrypoint instead of being passed as an argument to the image entrypoint.
+    entrypoint: ["bash", "/tmp/run.sh"]
     environment:
       # Mirrors the OSMO task `environment:` block plus the GPU capabilities the
       # pod template normally injects.

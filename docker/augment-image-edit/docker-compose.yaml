@@ -39,8 +39,11 @@ services:
   augment-image-edit:
     # image: nvcr.io/nvidia/paidf-augmentation:1.0.0
     image: ubuntu:24.04
+    network_mode: "host"
     # OSMO overrides the image ENTRYPOINT; we do the same and drive run.sh.
-    command: ["bash", "/tmp/run.sh"]
+    # Override (not append to) the image's own ENTRYPOINT so run.sh is the actual
+    # entrypoint instead of being passed as an argument to the image entrypoint.
+    entrypoint: ["bash", "/tmp/run.sh"]
     environment:
       # Mirrors the OSMO task `environment:` block plus the GPU capabilities the
       # pod template normally injects.

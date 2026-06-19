@@ -50,26 +50,39 @@ Read these before converting a new task — they are the canonical examples:
 docker/<task-name>/
   docker-compose.yaml   # the service, env, and volume mounts
   run_org.sh            # the REAL executor (ported from the task's inline run.sh)
-  run.sh                # DRY-RUN variant: echoes heavy commands, hydrates input/output paths
+  run.sh                # DRY-RUN variant (see "Dry-run vs real-run" below)
   setup.sh              # `source`-d to export host paths + params before compose up
   <inline-script>.py    # any inline OSMO `files: contents` script, broken out
 ```
 
-- **`run_org.sh` is the real script.** **`run.sh` is the dry run** — it performs
-  the host-side prep without needing special libs and gpu. Mostly used for validating
-  the hydrated input/output paths. Only `echo`s the heavy GPU / model / `uv run`
-  commands, so the flow can be exercised on the placeholder `ubuntu:24.04` image
-  without a GPU or live endpoint.
-- `docker-compose.yaml` runs `run.sh` by default (dry-run safe). Switching to a
-  real run = flip the image to the real `nvcr.io/...` image and point `command`
-  at `run_org.sh` (call this out in `setup.sh` with an echoed NOTE).
+## Dry-run vs real-run
+
+Every task ships in **dry-run mode by default** so the flow can be exercised on
+a plain `ubuntu:24.04` image with no GPU, no model weights, and no live
+endpoint. Switching to a real run is three edits in `docker-compose.yaml`.
+
+| Concern | Dry-run (default, what's committed) | Real run (user flips) |
+| --- | --- | --- |
+| `image:` | `ubuntu:24.04` placeholder | real `nvcr.io/...` image (kept commented next to the placeholder) |
+| `entrypoint:` | `["bash", "/tmp/run.sh"]` | `["bash", "/tmp/run_org.sh"]` |
+| GPU block | commented `deploy.resources.reservations.devices` + `NVIDIA_VISIBLE_DEVICES: all` | uncommented |
+| `run.sh` body | `echo`s the heavy GPU / model / `uv run` commands; host-side prep (path hydration, cookbook templating) runs for real | n/a — `run_org.sh` runs everything for real |
+| Post-run sanity checks (`find ... \| wc -l` then `exit 1` on zero) | **commented out in `run.sh`** — nothing was actually produced | live in `run_org.sh` |
+
+Use `entrypoint:` (not `command:`) so the real `nvcr.io/...` image's own
+`ENTRYPOINT` is overridden, matching OSMO's `command: ["bash"]` + `args:`
+behavior. With `command:` the script path would be appended to the image's
+ENTRYPOINT instead of replacing it.
+
+`setup.sh` must `echo` a NOTE reminding the user of these three swaps before
+they `docker compose up` for a real run.
 
 ## Mapping rules (OSMO construct → Docker Compose)
 
 | OSMO task construct | Docker Compose port |
 | --- | --- |
-| `image: "{{ some_image }}"` | `image:` — keep real `nvcr.io/...` image commented, use `ubuntu:24.04` placeholder for dry-run |
-| `command: ["bash"]` + `args: ["/tmp/run.sh"]` | `command: ["bash", "/tmp/run.sh"]` (ENTRYPOINT is overridden, same as OSMO) |
+| `image: "{{ some_image }}"` | see "Dry-run vs real-run" |
+| `command: ["bash"]` + `args: ["/tmp/run.sh"]` | see "Dry-run vs real-run" |
 | `environment:` block | `environment:` in compose; resolve `{{ param }}` to `${ENV:-default}` |
 | `credentials: { name: { ENV: key } }` | plain `environment:` var (e.g. `HF_TOKEN: "${HF_TOKEN:-}"`); never commit the secret |
 | `inputs: [{ url: ... }]` | read-only volume `-"${INPUT_DIR}:/data/input:ro"`; `{{input:0}}` → `/data/input` |
@@ -78,14 +91,9 @@ docker/<task-name>/
 | `files: [{ localpath, path }]` | read-only volume mounting that cookbook/asset to `path` |
 | `files: [{ path, contents: \| ... }]` | break the inline script out to a real file next to the compose, mount it |
 | pod-template hostPath (e.g. nvoptix.bin) | read-only host volume mount with an env-overridable default path |
-| `resources: { gpu, cpu, memory }` | commented `deploy.resources.reservations.devices` GPU block + `NVIDIA_VISIBLE_DEVICES: all` |
-| `{{ scene_filename }}` and other params | `${SCENE_FILENAME:-default}` env, set in `setup.sh` |
+| `resources: { gpu, cpu, memory }` | see "Dry-run vs real-run" (GPU block) |
+| `{{ scene_filename }}` and other params | `${SCENE_FILENAME:-default}` env, set in `setup.sh`; referenced as `$SCENE_FILENAME` inside `run.sh` / `run_org.sh` |
 | `shm_size` need (Kit ray-tracer etc.) | `shm_size: "32gb"` on the service |
-
-When porting the inline `run.sh`, replace every OSMO template token:
-`{{input:0}}` → `$INPUT_DIR`, `{{output}}` → `$OUTPUT_DIR`,
-`{{ param }}` → the corresponding `$PARAM` env (defaulted at the top of the
-script with `${PARAM:-default}`).
 
 ## Task-to-task chaining (shared TIMESTAMP)
 
@@ -101,8 +109,8 @@ single run `TIMESTAMP` ties them together:
 read -r -p "Run TIMESTAMP to use (e.g. 20260619_120000): " TIMESTAMP
 [ -n "$TIMESTAMP" ] || { echo "ERROR: TIMESTAMP is required"; return 1 2>/dev/null || exit 1; }
 export TIMESTAMP
-export INPUT_DIR=/modeldata1/dig/runs/pcb-${TIMESTAMP}
-export OUTPUT_DIR=/modeldata1/dig/runs/pcb-${TIMESTAMP}/augment
+export INPUT_DIR=/datadrive/dig/runs/pcb-${TIMESTAMP}
+export OUTPUT_DIR=/datadrive/dig/runs/pcb-${TIMESTAMP}/augment
 ```
 
 Match `INPUT_DIR` to **where the upstream docker task actually writes**, not to
@@ -113,17 +121,11 @@ writes `crop/` straight into `runs/pcb-${TIMESTAMP}/`). Verify the upstream
 
 ## Conventions / gotchas
 
-- **Dry-run sanity checks**: any post-run check that inspects produced files
-  (e.g. `find ... | wc -l` then `exit 1` if zero) must be **commented out in
-  `run.sh`** — nothing is produced when commands are only echoed. Keep them live
-  in `run_org.sh`.
 - **Secrets**: HF tokens / registry creds become env vars defaulted to empty
   (`${HF_TOKEN:-}`); tell the user to export them in their shell, not commit them.
 - **Comment headers**: each file opens with a comment block stating which
   OSMO task / config it ports and how OSMO constructs map to the compose env and
   volumes — match the style of the reference folders.
-- **`setup.sh` echoes a NOTE** reminding the user to switch the image and run
-  script in `docker-compose.yaml` for a real (non-dry) run.
 
 ## Procedure
 
@@ -131,13 +133,10 @@ writes `crop/` straight into `runs/pcb-${TIMESTAMP}/`). Verify the upstream
    Read the whole task: `image`, `environment`, `credentials`, `inputs`,
    `outputs`, `files` (both `localpath` mounts and inline `contents` scripts),
    and the workflow `default-values` for every `{{ param }}` it references.
-2. Identify upstream/downstream tasks to know what `INPUT_DIR` must point at.
-3. Create `docker/<task-name>/` and write the five file types above:
-   - `docker-compose.yaml` (placeholder image, env, volumes, commented GPU block),
-   - `run_org.sh` (faithful port of the inline run.sh),
-   - `run.sh` (dry-run: echo heavy commands, comment out post-run sanity checks),
-   - any inline `files: contents` script broken out verbatim,
-   - `setup.sh` (prompt for TIMESTAMP, export host paths + params + secrets).
-4. Resolve every `{{ ... }}` token to an env var with a sensible default.
-5. Tell the user how to chain it (reuse the upstream run's TIMESTAMP) and how to
-   flip to a real run (real image + `run_org.sh`).
+2. Identify the upstream task so `INPUT_DIR` can point at **where the upstream
+   docker port actually writes** (often a flatter path than the OSMO `outputs.url`).
+3. Create `docker/<task-name>/` with the five file types from "Output layout",
+   applying the mapping table and the dry-run defaults.
+4. Wire `setup.sh` to prompt for the shared `TIMESTAMP` and export host paths,
+   params, and secrets.
+

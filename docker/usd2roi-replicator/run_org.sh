@@ -86,14 +86,14 @@ cp "$PCBA_PATCHED" "$OUT/pcba_target.yaml"
 
 # 3. Stage 1 — labelled scan_grid render (Kit). Invoke the base-app launcher
 #    directly (the image ENTRYPOINT is bypassed, same as under OSMO).
-echo "/isaac-sim/kit/kit /isaac-sim/apps/isaacsim.exp.base.kit \
+/isaac-sim/kit/kit /isaac-sim/apps/isaacsim.exp.base.kit \
   --no-window --exec \
-  \"/workspace/paidf-simulation/scripts/sdg/standalone/sdg_pipeline.py \
+  "/workspace/paidf-simulation/scripts/sdg/standalone/sdg_pipeline.py \
    --config $SDG_YAML --pcba-config $PCBA_PATCHED"
 
 # 4. Stage 2 — multi-cell ROI crop (pure python, no Kit).
-echo "python3 /workspace/paidf-simulation/scripts/usd2roi/usd2roi_crop.py \
-  --config \"$CROP_YAML"
+python3 /workspace/paidf-simulation/scripts/usd2roi/usd2roi_crop.py \
+  --config "$CROP_YAML"
 
 # 5. Sanity check — at least one populated cell.
 PAIR_COUNT=$(find "$OUT/crop" -path '*/normal_img/*.png' 2>/dev/null | wc -l)
