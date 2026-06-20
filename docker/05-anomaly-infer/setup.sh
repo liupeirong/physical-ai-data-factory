@@ -48,7 +48,7 @@ export EXP_NAME=anomaly-${TIMESTAMP}
 # ── AnomalyGen inference knobs (defaults from texture_defect_generation_day0.yaml) ──
 # Shipped PCBA checkpoint trains on these three (material, defect) pairs.
 # Override to retarget the anomaly set.
-export ANOMALY_TYPES_JSON='[["IC","bridge"],["passive_component","excess_solder"],["passive_component","missing"]]'
+export ANOMALY_TYPES_JSON='["passive_component","excess_solder"],["passive_component","missing"]]'
 # Step to load (auto-picked from valid KPIs for freshly-trained checkpoints).
 export CHECKPOINT_STEP=14000
 # Total SDG entries across all defects.
