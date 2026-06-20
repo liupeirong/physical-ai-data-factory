@@ -1,0 +1,115 @@
+# anomaly-infer — standalone Docker Compose port of the OSMO
+# `anomaly-infer / infer-all-defects` task from
+#   skills/physical-ai-defect-image-generation/assets/configs/texture_defect_generation_day0.yaml
+#
+# Runs AnomalyGen inference end-to-end on a single local GPU:
+#   1. Stage augmented per-cell SL clean images + usd2roi cad_masks into the
+#      canonical anomalygen layout (<MATERIAL>/{clean_image,cad_mask,mask}).
+#   2. Render defect_spec.jsonl from --set anomaly_types_json.
+#   3. anomalygen `prep_testcase.sh` → `validate_jsonl.py` → `run_sdg.sh` →
+#      `verify_output.sh` against the staged tree, using the supplied checkpoint.
+#
+# Pipeline position (texture day-0 full flow):
+#   usd2roi-replicator → augment-image-edit → [finetune?] → anomaly-infer (this)
+#
+# ── Prerequisites on the Docker host ─────────────────────────────────────────
+#   1. NVIDIA driver + NVIDIA Container Toolkit installed (so `--gpus` works).
+#   2. A Hugging Face token with access to the gated weights pulled in by
+#      anomalygen (Qwen3-VL etc.) — was the OSMO `credentials: hf-token` block.
+#   3. Four data trees available on the host:
+#        a. CLEAN_INPUT_DIR     — augment-image-edit output (per-cell SL clean
+#                                 images, contains crop/<MAT>/<cell>/<NNNN>.png)
+#        b. MASK_INPUT_DIR      — usd2roi-replicator output (contains
+#                                 crop/<MAT>/<cell>/cad_mask/)
+#        c. SUBMASK_INPUT_DIR   — `datasets/pcb/raw` tree (per-defect submask
+#                                 templates: <MAT>/mask/<defect>/...)
+#        d. PRETRAINED_DIR      — `models/pretrained` tree (NVDINOV2, sam2,
+#                                 Qwen, C-RADIOv2_B.pth, ...)
+#        e. CHECKPOINT_DIR      — either the shipped `models/pcb` checkpoint
+#                                 OR a finetune run output (must contain
+#                                 ag_config.yaml + iter_<step>.pt files).
+#   4. nvcr.io login if your account requires it (paidf-* images are public).
+#
+# ── Configure via environment (or `source setup.sh` next to this compose) ────
+#   CLEAN_INPUT_DIR             host path to the augment-image-edit output    (REQUIRED)
+#   MASK_INPUT_DIR              host path to the usd2roi-replicator output    (REQUIRED)
+#   SUBMASK_INPUT_DIR           host path to datasets/pcb/raw                 (REQUIRED)
+#   PRETRAINED_DIR              host path to models/pretrained                (REQUIRED)
+#   CHECKPOINT_DIR              host path to models/pcb OR finetune output    (REQUIRED)
+#   SCRIPTS_DIR                 host path to skills/physical-ai-defect-image-generation/scripts  (REQUIRED)
+#   OUTPUT_DIR                  host path where inference outputs are written (REQUIRED)
+#   HF_TOKEN                    Hugging Face token                            (REQUIRED)
+#   EXP_NAME                    run identifier (was the OSMO `name` knob)     (default anomaly-${TIMESTAMP})
+#   ANOMALY_TYPES_JSON          JSON list of [material, defect] pairs         (default shipped-PCBA taxonomy)
+#   CHECKPOINT_STEP             iter step to load (auto if best-step pickable)(default 14000)
+#   NUM_SDG                     total SDG entries across all defects          (default 30)
+#   DEFAULT_SPATIAL_DEPENDENCY  free|text|cad                                  (default cad)
+#   MODEL_SIZE                  AnomalyGen model size                          (default 2b)
+#
+# ── Run ──────────────────────────────────────────────────────────────────────
+#   source setup.sh && docker compose up
+#   (add --abort-on-container-exit to stop the moment the job finishes)
+
+services:
+  anomaly-infer:
+    image: nvcr.io/nvidia/paidf-anomalygen:1.0.0
+    # AnomalyGen rank loads the full 2B + tokenizer + DINOv2 + Cosmos-Predict2
+    # stack; large /dev/shm avoids torch DataLoader pin-memory failures.
+    shm_size: "32gb"
+    # OSMO overrides the image ENTRYPOINT; we do the same and drive run.sh.
+    # Override (not append to) the image's own ENTRYPOINT so run.sh is the actual
+    # entrypoint instead of being passed as an argument to the image entrypoint.
+    entrypoint: ["bash", "/tmp/run.sh"]
+    environment:
+      # Mirrors the OSMO task `environment:` block plus the GPU capabilities the
+      # pod template normally injects.
+      NVIDIA_DRIVER_CAPABILITIES: all
+      NVIDIA_VISIBLE_DEVICES: all
+      # Was the OSMO `credentials: hf-token -> HF_TOKEN: token` injection.
+      HF_TOKEN: "${HF_TOKEN:-}"
+      # Replaces OSMO templating ({{ ... }} workflow knobs).
+      EXP_NAME: "${EXP_NAME:-anomaly-infer}"
+      ANOMALY_TYPES_JSON: '${ANOMALY_TYPES_JSON:-[["IC","bridge"],["passive_component","excess_solder"],["passive_component","missing"]]}'
+      CHECKPOINT_STEP: "${CHECKPOINT_STEP:-14000}"
+      NUM_SDG: "${NUM_SDG:-30}"
+      DEFAULT_SPATIAL_DEPENDENCY: "${DEFAULT_SPATIAL_DEPENDENCY:-cad}"
+      MODEL_SIZE: "${MODEL_SIZE:-2b}"
+      # Replaces OSMO templating ({{input:0..4}} / {{output}}).
+      CLEAN_IN: /data/clean
+      MASK_IN: /data/mask
+      SUBMASK_BASE_IN: /data/submask
+      PRETRAINED_SRC_IN: /data/pretrained
+      CKPT_DATASET: /data/checkpoint
+      OSMO_OUTPUT_ROOT: /data/output
+    volumes:
+      # augment-image-edit output (read-only) — was OSMO {{input:0}}.
+      - "${CLEAN_INPUT_DIR}:/data/clean:ro"
+      # usd2roi-replicator output (read-only) — was OSMO {{input:1}}; supplies
+      # cad_masks (and the global semantic_segmentation_labels.json when
+      # DEFAULT_SPATIAL_DEPENDENCY=cad).
+      - "${MASK_INPUT_DIR}:/data/mask:ro"
+      # datasets/pcb/raw (read-only) — was OSMO {{input:2}}, per-defect submask
+      # templates under <MAT>/mask/<defect>/.
+      - "${SUBMASK_INPUT_DIR}:/data/submask:ro"
+      # models/pretrained (read-only) — was OSMO {{input:3}}; linked into
+      # /workspace/paidf-anomalygen/checkpoints/ for NVDINOV2/sam2/Qwen/etc.
+      - "${PRETRAINED_DIR}:/data/pretrained:ro"
+      # Checkpoint (read-only) — was OSMO {{input:4}}; either the shipped
+      # `models/pcb` tree or a finetune run output (ag_config.yaml + iter_*.pt).
+      - "${CHECKPOINT_DIR}:/data/checkpoint:ro"
+      # Run output — was the OSMO URL output runs/<name>/anomaly. run.sh nests
+      # the actual SDG output under <OUTPUT_DIR>/inference/ so the daft-format
+      # sibling path lands inside the writable mount.
+      - "${OUTPUT_DIR}:/data/output"
+      # Helper scripts — were OSMO `files: localpath` mounts.
+      - "${SCRIPTS_DIR}/render_defect_spec.py:/tmp/render_defect_spec.py:ro"
+      - "${SCRIPTS_DIR}/pick_best_step.sh:/tmp/pick_best_step.sh:ro"
+      # Env-driven port of the OSMO inline run_infer.sh (lives next to this compose).
+      - "./run.sh:/tmp/run.sh:ro"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
