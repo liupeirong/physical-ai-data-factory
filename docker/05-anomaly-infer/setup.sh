@@ -21,7 +21,7 @@ export MASK_INPUT_DIR=/datadrive/dig/runs/pcb-${TIMESTAMP}
 
 # ── Input trees from the prepared DIG URL layout (setup/setup_pcb.yaml) ──────
 export SUBMASK_INPUT_DIR=/datadrive/dig/datasets/pcb/raw
-export PRETRAINED_DIR=/datadrive/dig/models/pretrained
+export PRETRAINED_DIR=/datadrive/dig/models/pretrained/pretrained
 # Default: shipped PCBA checkpoint (use_pretrained_checkpoint=true).
 # To consume a freshly-trained finetune output instead, point this at
 # /datadrive/dig/runs/pcb-${TIMESTAMP}/finetune (or wherever the finetune task
