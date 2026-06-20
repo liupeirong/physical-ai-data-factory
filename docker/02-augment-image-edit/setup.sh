@@ -9,11 +9,6 @@
 # INPUT_DIR points at the usd2roi-replicator output tree (the dir that directly
 # contains crop/<MATERIAL>/<cell>/normal_img/); OUTPUT_DIR is the augment subdir
 # of the same run.
-echo "NOTE: For a real run, change 3 things in docker-compose.yaml!"
-echo "1. the docker image"
-echo "2. mount run_org.sh instead of run.sh"
-echo "3. uncomment the gpu section at the end"
-
 read -r -p "Run TIMESTAMP to use (e.g. 20260619_120000): " TIMESTAMP
 [ -n "$TIMESTAMP" ] || { echo "ERROR: TIMESTAMP is required"; return 1 2>/dev/null || exit 1; }
 export TIMESTAMP

@@ -34,8 +34,7 @@
 
 services:
   isaac-render-defect:
-    # image: nvcr.io/nvidia/paidf-simulation:1.0.0
-    image: ubuntu:24.04
+    image: nvcr.io/nvidia/paidf-simulation:1.0.0
     # Kit ray-tracer buffers need a large /dev/shm (>= 16 GiB, 32 preferred).
     shm_size: "32gb"
     # OSMO overrides the image ENTRYPOINT; we do the same and drive run.sh.
@@ -66,10 +65,10 @@ services:
       - "${COOKBOOKS_DIR}/pcb/${BOARD:-0603_H100}/defect_image.yaml:/tmp/render_config.yaml:ro"
       # Env-driven port of the OSMO inline run_render.sh (lives next to this compose).
       - "./run.sh:/tmp/run.sh:ro"
-#    deploy:
-#      resources:
-#        reservations:
-#          devices:
-#            - driver: nvidia
-#              count: 1
-#              capabilities: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

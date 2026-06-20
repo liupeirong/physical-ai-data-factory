@@ -7,10 +7,6 @@
 # render is the FIRST task in this flow, so this setup writes a fresh
 # OUTPUT_DIR for ${TIMESTAMP}; a downstream augment-image-edit port for the
 # structural flow would read this same dir as its INPUT_DIR.
-echo "NOTE: For a real run, change 3 things in docker-compose.yaml!"
-echo "1. the docker image"
-echo "2. mount run_org.sh instead of run.sh"
-echo "3. uncomment the gpu section at the end"
 
 read -r -p "Run TIMESTAMP to use (e.g. 20260619_120000): " TIMESTAMP
 [ -n "$TIMESTAMP" ] || { echo "ERROR: TIMESTAMP is required"; return 1 2>/dev/null || exit 1; }

@@ -15,12 +15,8 @@
 #
 # Only the differing pieces live here:
 #   setup.sh              — INPUT_DIR/OUTPUT_DIR for the structural flow
-#   run.sh / run_org.sh   — preflight + sanity checks for the cropped/<mode>/rgb/ layout
+#   run.sh                — preflight + sanity checks for the cropped/<mode>/rgb/ layout
 #   build_batch_config.py — walks cropped/<mode>/rgb/, emits <output>/<mode>/rgb/
-echo "NOTE: For a real run, change 3 things in docker-compose.yaml!"
-echo "1. the docker image"
-echo "2. mount run_org.sh instead of run.sh"
-echo "3. uncomment the gpu section at the end"
 
 read -r -p "Run TIMESTAMP to use (e.g. 20260619_120000): " TIMESTAMP
 [ -n "$TIMESTAMP" ] || { echo "ERROR: TIMESTAMP is required"; return 1 2>/dev/null || exit 1; }

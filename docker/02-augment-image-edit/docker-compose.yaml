@@ -37,8 +37,7 @@
 
 services:
   augment-image-edit:
-    # image: nvcr.io/nvidia/paidf-augmentation:1.0.0
-    image: ubuntu:24.04
+    image: nvcr.io/nvidia/paidf-augmentation:1.0.0
     network_mode: "host"
     # OSMO overrides the image ENTRYPOINT; we do the same and drive run.sh.
     # Override (not append to) the image's own ENTRYPOINT so run.sh is the actual
@@ -69,10 +68,10 @@ services:
       - "./build_batch_config.py:/tmp/build_batch_config.py:ro"
       # Env-driven port of the OSMO inline run.sh (lives next to this compose).
       - "./run.sh:/tmp/run.sh:ro"
-#    deploy:
-#      resources:
-#        reservations:
-#          devices:
-#            - driver: nvidia
-#              count: 1
-#              capabilities: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
