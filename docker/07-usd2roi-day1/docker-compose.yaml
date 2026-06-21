@@ -1,0 +1,76 @@
+# usd2roi-day1 — standalone Docker Compose port of the OSMO `usd2roi-day1`
+# task (group `usd2roi-render-day1`) from
+#   assets/configs/texture_defect_generation_day1_real_alignment.yaml
+#
+# Runs three inline stages on a single local GPU instead of an OSMO task /
+# Kubernetes pod:
+#   1. usd2roi_render.py    (Kit, GPU)    — single ortho viewpoint render
+#   2. usd2roi_register.py  (cupy, GPU)   — MI alignment of synth → real photo
+#   3. usd2roi_crop.py      (CPU python)  — per-ROI bbox crops (synth+real+seg)
+# Exits non-zero if MI registration falls below `min_mi` in the cookbook
+# (default 0.5) — see
+#   skills/physical-ai-defect-image-generation/references/troubleshooting.md
+#   ("usd2roi day-1 MI alignment").
+#
+# ── Prerequisites on the Docker host ─────────────────────────────────────────
+#   1. NVIDIA driver + NVIDIA Container Toolkit installed (so `--gpus` works).
+#   2. The OptiX denoiser binary present on the host, default
+#      /usr/share/nvidia/nvoptix.bin (installed with the NVIDIA driver). Kit
+#      silently degrades to noisy raw path tracing without it.
+#   3. The USD asset tree available on the host (the canonical
+#      `datasets/pcb/assets` bundle, which ships
+#      `input_real_image/<board>.jpg` alongside the USD tree). Point
+#      INPUT_ASSETS_DIR at it.
+#   4. nvcr.io login if your account requires it (paidf-* images are public).
+#
+# ── Configure via environment (or a .env file next to this compose) ──────────
+#   INPUT_ASSETS_DIR     host path to the USD asset tree (with input_real_image/)
+#   OUTPUT_DIR           host path where outputs are written
+#   COOKBOOKS_DIR        host path to assets/cookbooks/ in this repo
+#   BOARD                per-board cookbook dir under cookbooks/pcb (default 0603_H100)
+#   NVOPTIX_BIN          host path to nvoptix.bin                   (default /usr/share/nvidia/nvoptix.bin)
+#   SCENE_FILENAME       USD basename inside INPUT_ASSETS_DIR       (default spark_lighting.usd)
+#   REAL_IMAGE_FILENAME  real photo path inside INPUT_ASSETS_DIR    (default input_real_image/0603_H100.jpg)
+#
+# ── Run ──────────────────────────────────────────────────────────────────────
+#   source setup.sh && docker compose up --abort-on-container-exit
+
+services:
+  usd2roi-day1:
+    image: nvcr.io/nvidia/paidf-simulation:1.0.0
+    # Kit ray-tracer buffers need a large /dev/shm (>= 16 GiB, 32 preferred).
+    shm_size: "32gb"
+    # OSMO overrides the image ENTRYPOINT; we do the same and drive run.sh.
+    # Override (not append to) the image's own ENTRYPOINT so run.sh is the actual
+    # entrypoint instead of being passed as an argument to the image entrypoint.
+    entrypoint: ["bash", "/tmp/run.sh"]
+    environment:
+      # Mirrors the OSMO task `environment:` block plus the GPU capabilities the
+      # pod template normally injects.
+      NVIDIA_DRIVER_CAPABILITIES: all
+      NVIDIA_VISIBLE_DEVICES: all
+      # Replaces OSMO templating ({{input:0}} / {{output}} / {{ scene_filename }} /
+      # {{ real_image_filename }}).
+      ASSETS_IN: /data/assets
+      OUT: /data/output
+      SCENE_FILENAME: "${SCENE_FILENAME:-spark_lighting.usd}"
+      REAL_IMAGE_FILENAME: "${REAL_IMAGE_FILENAME:-input_real_image/0603_H100.jpg}"
+    volumes:
+      # USD asset tree + input_real_image/<board>.jpg (read-only) — was the OSMO
+      # URL input {{input:0}} = {{ dig_url_root }}/datasets/pcb/assets.
+      - "${INPUT_ASSETS_DIR}:/data/assets:ro"
+      # Run output — was the OSMO URL output runs/<name>/usd2roi-day1.
+      - "${OUTPUT_DIR}:/data/output"
+      # OptiX denoiser binary — was the pod-template hostPath mount.
+      - "${NVOPTIX_BIN:-/usr/share/nvidia/nvoptix.bin}:/usr/share/nvidia/nvoptix.bin:ro"
+      # Per-board day-1 cookbook — was the OSMO `files: localpath` mount.
+      - "${COOKBOOKS_DIR}/pcb/${BOARD:-0603_H100}/usd2roi_nvpcb.yaml:/tmp/usd2roi_day1.yaml:ro"
+      # Env-driven port of the OSMO inline run.sh (lives next to this compose).
+      - "./run.sh:/tmp/run.sh:ro"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
