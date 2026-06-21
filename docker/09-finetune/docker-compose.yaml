@@ -1,0 +1,91 @@
+# finetune — standalone Docker Compose port of the OSMO `finetune-job /
+# finetune` task from
+#   skills/physical-ai-defect-image-generation/assets/configs/finetune.yaml
+#
+# Runs anomalygen Phase 1 end-to-end on a single host (one or more local GPUs):
+#   1. validate_dataset.py            (structural sanity + mask counting)
+#   2. prep_testcase.sh               (AMP placement, n_seeds=1 per mask)
+#      → /tmp/validation/validation.jsonl + /tmp/validation/amp/
+#   3. yq render of the per-usecase cookbook into /tmp/ag_config.yaml
+#   4. torchrun ag_train (experiment=predict2_anomaly_gen_ddp_2b)
+#
+# Output is a checkpoint tree usable as input to the anomaly-infer tasks
+# (05/06/08) — point their CHECKPOINT_DIR env var at OUTPUT_DIR.
+#
+# ── Prerequisites on the Docker host ─────────────────────────────────────────
+#   1. NVIDIA driver + NVIDIA Container Toolkit installed (so `--gpus` works).
+#   2. A Hugging Face token with access to the gated weights pulled in by
+#      anomalygen (Qwen3-VL etc.) — was the OSMO `credentials: hf-token` block.
+#   3. Two data trees available on the host:
+#        a. PRETRAINED_DIR — `models/pretrained` tree (NVDINOV2, sam2, Qwen,
+#                            C-RADIOv2_B.pth, ...)
+#        b. DATASET_DIR    — `datasets/<usecase>/raw` tree (canonical anomalygen
+#                            layout: <TEXTURE>/{clean_image,mask,...} +
+#                            defect_spec.jsonl).
+#   4. The per-usecase cookbook checked out at
+#      ${COOKBOOKS_DIR}/${USECASE}/ag_config.yaml.
+#   5. nvcr.io login if your account requires it (paidf-* images are public).
+#
+# ── Configure via environment (or `source setup.sh` next to this compose) ────
+#   PRETRAINED_DIR              host path to models/pretrained               (REQUIRED)
+#   DATASET_DIR                 host path to datasets/<usecase>/raw          (REQUIRED)
+#   COOKBOOKS_DIR               host path to assets/cookbooks/ in this repo  (REQUIRED)
+#   OUTPUT_DIR                  host path where the trained checkpoint lands (REQUIRED)
+#   HF_TOKEN                    Hugging Face token                           (REQUIRED)
+#   USECASE                     pcb | glass | metal_surface — picks cookbook (default pcb)
+#   EXP_NAME                    run identifier (was the OSMO `name` knob)    (default finetune-${TIMESTAMP})
+#   NUM_GPUS                    GPUs visible to torchrun                     (default 1)
+#
+# ── Run ──────────────────────────────────────────────────────────────────────
+#   source setup.sh && docker compose up
+#   (add --abort-on-container-exit to stop the moment the job finishes)
+
+services:
+  finetune:
+    image: nvcr.io/nvidia/paidf-anomalygen:1.0.0
+    # AnomalyGen rank loads the full 2B + tokenizer + DINOv2 + Cosmos-Predict2
+    # stack; large /dev/shm avoids torch DataLoader pin-memory failures.
+    shm_size: "32gb"
+    # OSMO overrides the image ENTRYPOINT; we do the same and drive run.sh.
+    # Override (not append to) the image's own ENTRYPOINT so run.sh is the actual
+    # entrypoint instead of being passed as an argument to the image entrypoint.
+    entrypoint: ["bash", "/tmp/run.sh"]
+    environment:
+      # Mirrors the OSMO task `environment:` block plus the GPU capabilities the
+      # pod template normally injects.
+      NVIDIA_DRIVER_CAPABILITIES: all
+      NVIDIA_VISIBLE_DEVICES: all
+      # Was the OSMO `credentials: hf-token -> HF_TOKEN: token` injection.
+      HF_TOKEN: "${HF_TOKEN:-}"
+      # Replaces OSMO templating ({{ ... }} workflow knobs).
+      EXP_NAME: "${EXP_NAME:-finetune}"
+      USECASE: "${USECASE:-pcb}"
+      NUM_GPUS: "${NUM_GPUS:-1}"
+      # Replaces OSMO templating ({{input:0..1}} / {{output}}).
+      PRETRAINED_SRC: /data/pretrained
+      DATASET_DIR: /data/dataset
+      OSMO_OUTPUT_ROOT: /data/output
+    volumes:
+      # models/pretrained (read-only) — was OSMO {{input:0}}; linked into
+      # /workspace/paidf-anomalygen/checkpoints/ for NVDINOV2/sam2/Qwen/etc.
+      # The image expects the inner `pretrained/` subdir (mirrors the OSMO
+      # PRETRAINED_SRC="{{input:0}}/pretrained" indirection).
+      - "${PRETRAINED_DIR}:/data/pretrained:ro"
+      # datasets/<usecase>/raw (read-only) — was OSMO {{input:1}}; canonical
+      # anomalygen layout with defect_spec.jsonl at root.
+      - "${DATASET_DIR}:/data/dataset:ro"
+      # Run output — was the OSMO URL output runs/<name>/finetune. torchrun
+      # writes results/anomaly_gen/<NAME>/<JOB_NAME>/{checkpoints,valid,...}
+      # under this mount.
+      - "${OUTPUT_DIR}:/data/output"
+      # Per-usecase cookbook template — was the OSMO `files: localpath` mount.
+      - "${COOKBOOKS_DIR}/${USECASE:-pcb}/ag_config.yaml:/tmp/ag_config_template.yaml:ro"
+      # Env-driven port of the OSMO inline finetune.sh (lives next to this compose).
+      - "./run.sh:/tmp/run.sh:ro"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
